@@ -1,0 +1,26 @@
+[project]
+name = "kobold-qwen-fastapi"
+version = "0.1.0"
+description = "FastAPI server wrapper for KoboldCpp running Qwen3-TTS, developed for the Pandrator application"
+keywords = ["tts", "qwen", "koboldcpp", "fastapi", "voice-cloning", "pandrator"]
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-arm64"]
+requires-pixi = ">=0.68.0"
+
+[tool.pixi.dependencies]
+python = "3.11.*"
+pip = "*"
+ffmpeg = "*"
+
+[tool.pixi.pypi-dependencies]
+fastapi = ">=0.115.0"
+uvicorn = { version = ">=0.34.0", extras = ["standard"] }
+pydantic = ">=2.0.0"
+python-multipart = ">=0.0.9"
+pydub = "*"
+requests = "*"
+psutil = "*"

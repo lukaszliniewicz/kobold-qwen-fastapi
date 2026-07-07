@@ -1,0 +1,35 @@
+# Pixi & Conda
+.pixi/
+pixi.lock
+
+# Log files
+*.log
+koboldcpp.log
+tts_server.log
+
+# Large Binaries & Models
+bin/
+models/
+
+# Cloned speakers and reference audio
+voices/
+*.wav
+!tests/**/*.wav
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+env/
+venv/
+
+# IDE files
+.vscode/
+.idea/
+
+# Local testing files
+request.json
+scratch/
