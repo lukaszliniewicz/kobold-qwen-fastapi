@@ -32,6 +32,7 @@ class ServerState:
     def __init__(self):
         self.kobold_port = None
         self.kobold_process = None
+        self.kobold_log_handle = None
         self.backend = os.environ.get("KOBOLD_QWEN_BACKEND", "cpu")
         self.threads = os.environ.get("KOBOLD_QWEN_THREADS", None)
 
@@ -39,11 +40,22 @@ state = ServerState()
 
 
 def get_free_port():
-    s = socket.socket()
-    s.bind(('', 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def apply_speed(sound: AudioSegment, speed: float) -> AudioSegment:
+    if speed <= 0 or abs(speed - 1.0) < 0.001:
+        return sound
+    if speed > 1.0:
+        return speedup(sound, playback_speed=speed)
+
+    slowed = sound._spawn(
+        sound.raw_data,
+        overrides={"frame_rate": max(1, int(sound.frame_rate * speed))},
+    )
+    return slowed.set_frame_rate(sound.frame_rate)
 
 
 def start_koboldcpp():
@@ -90,6 +102,7 @@ def start_koboldcpp():
     logger.info(f"KoboldCpp subprocess logs redirected to {log_file}")
 
     log_handle = open(log_file, "a", encoding="utf-8")
+    state.kobold_log_handle = log_handle
     
     # Hidden console on Windows to run cleanly in background
     kwargs = {}
@@ -97,13 +110,18 @@ def start_koboldcpp():
         # CREATE_NO_WINDOW = 0x08000000
         kwargs["creationflags"] = 0x08000000
 
-    state.kobold_process = subprocess.Popen(
-        command,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        cwd=PROJECT_DIR,
-        **kwargs
-    )
+    try:
+        state.kobold_process = subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            cwd=PROJECT_DIR,
+            **kwargs
+        )
+    except Exception:
+        log_handle.close()
+        state.kobold_log_handle = None
+        raise
 
 
 def stop_koboldcpp():
@@ -118,6 +136,9 @@ def stop_koboldcpp():
         except Exception as e:
             logger.error(f"Error terminating KoboldCpp process: {e}")
         state.kobold_process = None
+    if state.kobold_log_handle:
+        state.kobold_log_handle.close()
+        state.kobold_log_handle = None
 
 
 def is_koboldcpp_online(timeout=60):
@@ -302,7 +323,7 @@ async def generate_speech(request: SpeechRequest):
         if request.speed and request.speed != 1.0:
             try:
                 sound = AudioSegment.from_file(buffer)
-                sound = speedup(sound, request.speed)
+                sound = apply_speed(sound, request.speed)
                 buffer = io.BytesIO()
                 sound.export(buffer, format="wav")
                 buffer.seek(0)

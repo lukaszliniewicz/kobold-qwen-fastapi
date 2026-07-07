@@ -25,7 +25,7 @@ QWEN_TOKENIZER_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/qwen3-tt
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Kobold Qwen TTS FastAPI wrapper bootstrapper")
     parser.add_argument("--host", default="127.0.0.1", help="Host interface")
-    parser.add_argument("--port", type=int, default=8040, help="Port number")
+    parser.add_argument("--port", type=int, default=8042, help="Port number")
     parser.add_argument("--backend", choices=["auto", "cuda", "vulkan", "metal", "cpu"], default="auto", help="Backend accelerator target")
     parser.add_argument("--threads", type=int, default=None, help="Force specific number of CPU threads")
     parser.add_argument("--pixi-path", default=None, help="Pixi executable to use when bootstrapping")

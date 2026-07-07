@@ -27,7 +27,7 @@ It automatically detects the host machine's hardware (NVIDIA CUDA, Vulkan AMD/In
 
 ## Installation & Running
 
-Initialize the Pixi environment and run the server (listening on port `8040` by default):
+Initialize the Pixi environment and run the server (listening on port `8042` by default):
 
 ```bash
 # Cross-platform direct bootstrap. This installs/uses the local Pixi env.
