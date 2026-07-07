@@ -270,6 +270,12 @@ async def upload_voice(
                 os.remove(target_path)
             os.rename(temp_path, target_path)
 
+        # Restart KoboldCpp to force it to re-scan the VOICES_DIR directory
+        stop_koboldcpp()
+        start_koboldcpp()
+        if not is_koboldcpp_online():
+            raise RuntimeError("Failed to verify that KoboldCpp startup succeeded within 60s.")
+
         return {
             "id": resolved_id,
             "voice_id": resolved_id,
