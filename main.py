@@ -35,6 +35,7 @@ class ServerState:
         self.kobold_log_handle = None
         self.backend = os.environ.get("KOBOLD_QWEN_BACKEND", "cpu")
         self.threads = os.environ.get("KOBOLD_QWEN_THREADS", None)
+        self.active_model = "base"
 
 state = ServerState()
 
@@ -58,7 +59,12 @@ def apply_speed(sound: AudioSegment, speed: float) -> AudioSegment:
     return slowed.set_frame_rate(sound.frame_rate)
 
 
-def start_koboldcpp():
+def start_koboldcpp(model_type=None):
+    if model_type is None:
+        model_type = state.active_model
+    else:
+        state.active_model = model_type
+
     state.kobold_port = get_free_port()
     binary_name = "koboldcpp.exe" if os.name == "nt" else "koboldcpp"
     binary_path = os.path.join(PROJECT_DIR, "bin", binary_name)
@@ -66,11 +72,18 @@ def start_koboldcpp():
     if not os.path.exists(binary_path):
         raise FileNotFoundError(f"KoboldCpp binary not found at: {binary_path}")
 
+    model_filename = (
+        "Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf"
+        if model_type == "base"
+        else "Qwen3-TTS-12Hz-1.7B-CustomVoice-q8_0.gguf"
+    )
+    model_path = os.path.join(PROJECT_DIR, "models", model_filename)
+
     # Build command line arguments
     command = [
         binary_path,
         "--nomodel",
-        "--ttsmodel", os.path.join(PROJECT_DIR, "models", "Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf"),
+        "--ttsmodel", model_path,
         "--ttswavtokenizer", os.path.join(PROJECT_DIR, "models", "qwen3-tts-tokenizer-f16.gguf"),
         "--ttsdir", VOICES_DIR,
         "--port", str(state.kobold_port),
@@ -208,6 +221,19 @@ async def list_models():
     }
 
 
+PRESET_VOICE_DATA = [
+    {"id": "Vivian", "voice_id": "Vivian", "name": "Vivian"},
+    {"id": "Serena", "voice_id": "Serena", "name": "Serena"},
+    {"id": "Ryan", "voice_id": "Ryan", "name": "Ryan"},
+    {"id": "Uncle_Fu", "voice_id": "Uncle_Fu", "name": "Uncle_Fu"},
+    {"id": "Lily", "voice_id": "Lily", "name": "Lily"},
+    {"id": "Ada", "voice_id": "Ada", "name": "Ada"},
+    {"id": "Mia", "voice_id": "Mia", "name": "Mia"},
+    {"id": "Leo", "voice_id": "Leo", "name": "Leo"},
+    {"id": "Neo", "voice_id": "Neo", "name": "Neo"}
+]
+
+
 @app.get("/v1/audio/voices")
 @app.get("/v1/voices")
 @app.get("/v1/files")
@@ -221,6 +247,8 @@ async def list_voices():
                 "voice_id": voice_id,
                 "name": voice_id
             })
+    for preset in PRESET_VOICE_DATA:
+        voices.append(preset)
     return {"data": voices}
 
 
@@ -272,7 +300,7 @@ async def upload_voice(
 
         # Restart KoboldCpp to force it to re-scan the VOICES_DIR directory
         stop_koboldcpp()
-        start_koboldcpp()
+        start_koboldcpp(model_type="base")
         if not is_koboldcpp_online():
             raise RuntimeError("Failed to verify that KoboldCpp startup succeeded within 60s.")
 
@@ -294,20 +322,41 @@ async def upload_voice(
 async def generate_speech(request: SpeechRequest):
     logger.info(f"Speech request: text_len={len(request.input)}, voice={request.voice}")
 
-    # Resolve reference voice filename in voices dir
-    voice_filename = "kobo"
-    if request.voice and request.voice != "default":
-        # Handle cases where the request voice contains the extension
-        voice_raw = request.voice
-        if voice_raw.endswith(".wav"):
-            voice_raw = os.path.splitext(voice_raw)[0]
-        
-        if os.path.exists(os.path.join(VOICES_DIR, f"{voice_raw}.wav")):
-            voice_filename = f"{voice_raw}.wav"
-            logger.info(f"Using cloned voice reference file: {voice_filename}")
-        else:
-            voice_filename = voice_raw
-            logger.warning(f"Voice reference file '{voice_raw}.wav' not found, passing voice parameter directly.")
+    # Determine target model and voice filename
+    requested_voice = str(request.voice or "").strip()
+    voice_lower = requested_voice.lower()
+    
+    presets = {"vivian", "serena", "ryan", "uncle_fu", "lily", "ada", "mia", "leo", "neo"}
+    
+    if voice_lower in presets:
+        target_model = "customvoice"
+        preset_name = next((p["name"] for p in PRESET_VOICE_DATA if p["name"].lower() == voice_lower), requested_voice)
+        voice_filename = preset_name
+        logger.info(f"Requested preset voice: {voice_filename}. Target model: customvoice")
+    else:
+        target_model = "base"
+        voice_filename = "kobo"
+        if requested_voice and requested_voice != "default":
+            # Handle cases where the request voice contains the extension
+            voice_raw = requested_voice
+            if voice_raw.endswith(".wav"):
+                voice_raw = os.path.splitext(voice_raw)[0]
+            
+            if os.path.exists(os.path.join(VOICES_DIR, f"{voice_raw}.wav")):
+                voice_filename = f"{voice_raw}.wav"
+                logger.info(f"Using cloned voice reference file: {voice_filename}. Target model: base")
+            else:
+                voice_filename = voice_raw
+                logger.warning(f"Voice reference file '{voice_raw}.wav' not found, passing voice parameter directly. Target model: base")
+
+    # Dynamically restart KoboldCpp if the active model needs to change
+    if state.active_model != target_model:
+        logger.info(f"Dynamic switch: switching KoboldCpp from {state.active_model} to {target_model}...")
+        stop_koboldcpp()
+        start_koboldcpp(model_type=target_model)
+        if not is_koboldcpp_online():
+            logger.error("Failed to verify that KoboldCpp startup succeeded during dynamic switch.")
+            raise HTTPException(status_code=500, detail=f"Failed to start KoboldCpp with model: {target_model}")
 
     # Call KoboldCpp native TTS API
     url = f"http://127.0.0.1:{state.kobold_port}/api/extra/tts"

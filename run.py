@@ -19,6 +19,7 @@ DEFAULT_PIXI = PARENT_DIR / "bin" / ("pixi.exe" if os.name == "nt" else "pixi")
 # Download URLs
 KOBOLD_BASE_URL = "https://github.com/LostRuins/koboldcpp/releases/latest/download/"
 QWEN_MODEL_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf?download=true"
+QWEN_CUSTOM_MODEL_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/Qwen3-TTS-12Hz-1.7B-CustomVoice-q8_0.gguf?download=true"
 QWEN_TOKENIZER_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/qwen3-tts-tokenizer-f16.gguf?download=true"
 
 
@@ -217,10 +218,13 @@ def ensure_qwen_models():
     models_dir.mkdir(parents=True, exist_ok=True)
 
     model_path = models_dir / "Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf"
+    custom_model_path = models_dir / "Qwen3-TTS-12Hz-1.7B-CustomVoice-q8_0.gguf"
     tokenizer_path = models_dir / "qwen3-tts-tokenizer-f16.gguf"
 
     if not model_path.exists():
         download_file(QWEN_MODEL_URL, model_path)
+    if not custom_model_path.exists():
+        download_file(QWEN_CUSTOM_MODEL_URL, custom_model_path)
     if not tokenizer_path.exists():
         download_file(QWEN_TOKENIZER_URL, tokenizer_path)
 
