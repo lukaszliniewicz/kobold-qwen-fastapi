@@ -381,7 +381,7 @@ async def generate_speech(request: SpeechRequest):
         # Resolve canonical preset name (preserves original casing for KoboldCpp)
         preset_name = next(
             (p["name"] for p in PRESET_VOICE_DATA if p["name"].lower() == voice_lower),
-            requested_voice or PRESET_VOICE_DATA[0]["name"],
+            PRESET_VOICE_DATA[0]["name"],
         )
         voice_filename = preset_name
         logger.info(f"Preset voice: '{voice_filename}' — using CustomVoice model")
