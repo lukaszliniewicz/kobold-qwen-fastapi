@@ -243,15 +243,15 @@ async def list_models():
 
 # Preset voices are baked into the CustomVoice model; stored by canonical name
 PRESET_VOICE_DATA = [
-    {"id": "Vivian",   "voice_id": "Vivian",   "name": "Vivian"},
-    {"id": "Serena",   "voice_id": "Serena",   "name": "Serena"},
+    {"id": "Aiden",    "voice_id": "Aiden",    "name": "Aiden"},
+    {"id": "Dylan",    "voice_id": "Dylan",    "name": "Dylan"},
+    {"id": "Eric",     "voice_id": "Eric",     "name": "Eric"},
+    {"id": "Ono_Anna", "voice_id": "Ono_Anna", "name": "Ono_Anna"},
     {"id": "Ryan",     "voice_id": "Ryan",     "name": "Ryan"},
+    {"id": "Serena",   "voice_id": "Serena",   "name": "Serena"},
+    {"id": "Sohee",    "voice_id": "Sohee",    "name": "Sohee"},
     {"id": "Uncle_Fu", "voice_id": "Uncle_Fu", "name": "Uncle_Fu"},
-    {"id": "Lily",     "voice_id": "Lily",     "name": "Lily"},
-    {"id": "Ada",      "voice_id": "Ada",      "name": "Ada"},
-    {"id": "Mia",      "voice_id": "Mia",      "name": "Mia"},
-    {"id": "Leo",      "voice_id": "Leo",      "name": "Leo"},
-    {"id": "Neo",      "voice_id": "Neo",      "name": "Neo"},
+    {"id": "Vivian",   "voice_id": "Vivian",   "name": "Vivian"},
 ]
 # Fast lookup set (lowercase) for heuristic matching
 PRESET_NAMES_LOWER = {p["name"].lower() for p in PRESET_VOICE_DATA}
