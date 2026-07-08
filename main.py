@@ -69,7 +69,11 @@ def start_koboldcpp(model_type=None):
     binary_name = "koboldcpp.exe" if os.name == "nt" else "koboldcpp"
     binary_path = os.path.join(PROJECT_DIR, "bin", binary_name)
 
-    if not os.path.exists(binary_path):
+    # Check if we should run from patched source
+    src_py_path = "/home/lliniewicz/Pandrator/koboldcpp/koboldcpp.py"
+    use_source = os.path.exists(src_py_path)
+
+    if not use_source and not os.path.exists(binary_path):
         raise FileNotFoundError(f"KoboldCpp binary not found at: {binary_path}")
 
     model_filename = (
@@ -80,15 +84,27 @@ def start_koboldcpp(model_type=None):
     model_path = os.path.join(PROJECT_DIR, "models", model_filename)
 
     # Build command line arguments
-    command = [
-        binary_path,
-        "--nomodel",
-        "--ttsmodel", model_path,
-        "--ttswavtokenizer", os.path.join(PROJECT_DIR, "models", "qwen3-tts-tokenizer-f16.gguf"),
-        "--ttsdir", VOICES_DIR,
-        "--port", str(state.kobold_port),
-        "--quiet"
-    ]
+    if use_source:
+        command = [
+            "python3",
+            src_py_path,
+            "--nomodel",
+            "--ttsmodel", model_path,
+            "--ttswavtokenizer", os.path.join(PROJECT_DIR, "models", "qwen3-tts-tokenizer-f16.gguf"),
+            "--ttsdir", VOICES_DIR,
+            "--port", str(state.kobold_port),
+            "--quiet"
+        ]
+    else:
+        command = [
+            binary_path,
+            "--nomodel",
+            "--ttsmodel", model_path,
+            "--ttswavtokenizer", os.path.join(PROJECT_DIR, "models", "qwen3-tts-tokenizer-f16.gguf"),
+            "--ttsdir", VOICES_DIR,
+            "--port", str(state.kobold_port),
+            "--quiet"
+        ]
 
     # Add backend-specific flags
     backend = state.backend.lower()
@@ -124,11 +140,12 @@ def start_koboldcpp(model_type=None):
         kwargs["creationflags"] = 0x08000000
 
     try:
+        cwd_path = os.path.dirname(src_py_path) if use_source else PROJECT_DIR
         state.kobold_process = subprocess.Popen(
             command,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
-            cwd=PROJECT_DIR,
+            cwd=cwd_path,
             **kwargs
         )
     except Exception:
@@ -243,18 +260,18 @@ async def list_models():
 
 # Preset voices are baked into the CustomVoice model; stored by canonical name
 PRESET_VOICE_DATA = [
-    {"id": "Aiden",    "voice_id": "Aiden",    "name": "Aiden"},
-    {"id": "Dylan",    "voice_id": "Dylan",    "name": "Dylan"},
-    {"id": "Eric",     "voice_id": "Eric",     "name": "Eric"},
-    {"id": "Ono_Anna", "voice_id": "Ono_Anna", "name": "Ono_Anna"},
-    {"id": "Ryan",     "voice_id": "Ryan",     "name": "Ryan"},
-    {"id": "Serena",   "voice_id": "Serena",   "name": "Serena"},
-    {"id": "Sohee",    "voice_id": "Sohee",    "name": "Sohee"},
-    {"id": "Uncle_Fu", "voice_id": "Uncle_Fu", "name": "Uncle_Fu"},
-    {"id": "Vivian",   "voice_id": "Vivian",   "name": "Vivian"},
+    {"id": "Aiden",    "voice_id": "Aiden",    "name": "Aiden (English - American Male)"},
+    {"id": "Dylan",    "voice_id": "Dylan",    "name": "Dylan (Chinese - Beijing Dialect Male)"},
+    {"id": "Eric",     "voice_id": "Eric",     "name": "Eric (Chinese - Sichuan Dialect Male)"},
+    {"id": "Ono_Anna", "voice_id": "Ono_Anna", "name": "Ono_Anna (Japanese - Female)"},
+    {"id": "Ryan",     "voice_id": "Ryan",     "name": "Ryan (English - Male)"},
+    {"id": "Serena",   "voice_id": "Serena",   "name": "Serena (Chinese - Female)"},
+    {"id": "Sohee",    "voice_id": "Sohee",    "name": "Sohee (Korean - Female)"},
+    {"id": "Uncle_Fu", "voice_id": "Uncle_Fu", "name": "Uncle_Fu (Chinese - Dialect Male)"},
+    {"id": "Vivian",   "voice_id": "Vivian",   "name": "Vivian (Chinese - Female)"},
 ]
-# Fast lookup set (lowercase) for heuristic matching
-PRESET_NAMES_LOWER = {p["name"].lower() for p in PRESET_VOICE_DATA}
+# Fast lookup set (lowercase) for heuristic matching (supporting both ID and descriptive name)
+PRESET_NAMES_LOWER = {p["id"].lower() for p in PRESET_VOICE_DATA} | {p["name"].lower() for p in PRESET_VOICE_DATA}
 
 
 @app.get("/v1/audio/voices")
@@ -366,9 +383,10 @@ async def generate_speech(request: SpeechRequest):
     # ------------------------------------------------------------------ #
     if requested_model == MODEL_ID_CUSTOMVOICE:
         target_model = MODEL_CUSTOMVOICE
-    elif requested_model in (MODEL_ID_BASE, MODEL_ID_LEGACY, ""):
-        # Explicit base selection or legacy bare name — still apply heuristic
-        # so a preset voice name with model="qwen3-tts" works naturally.
+    elif requested_model == MODEL_ID_BASE:
+        target_model = MODEL_BASE
+    elif requested_model in (MODEL_ID_LEGACY, ""):
+        # Legacy bare name or empty — apply voice-name heuristic to decide
         target_model = MODEL_CUSTOMVOICE if voice_lower in PRESET_NAMES_LOWER else MODEL_BASE
     else:
         # Unknown model value — fall back to voice heuristic
@@ -378,13 +396,15 @@ async def generate_speech(request: SpeechRequest):
     # Step 2: Resolve voice filename                                       #
     # ------------------------------------------------------------------ #
     if target_model == MODEL_CUSTOMVOICE:
-        # Resolve canonical preset name (preserves original casing for KoboldCpp)
-        preset_name = next(
-            (p["name"] for p in PRESET_VOICE_DATA if p["name"].lower() == voice_lower),
-            PRESET_VOICE_DATA[0]["name"],
+        # Resolve canonical preset (supports both ID and descriptive name matching)
+        preset = next(
+            (p for p in PRESET_VOICE_DATA if p["id"].lower() == voice_lower or p["name"].lower() == voice_lower),
+            PRESET_VOICE_DATA[0],
         )
-        voice_filename = preset_name
-        logger.info(f"Preset voice: '{voice_filename}' — using CustomVoice model")
+        canonical_id = preset["id"]
+        # Pass the lowercase name directly since KoboldCpp's backend is now patched with the official speaker names
+        voice_filename = canonical_id.lower()
+        logger.info(f"Preset voice: '{canonical_id}' mapped to KoboldCpp name '{voice_filename}' — using CustomVoice model")
     else:
         # Base model: use uploaded WAV reference, fall back to koboldcpp default
         voice_filename = "kobo"
