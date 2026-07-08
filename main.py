@@ -231,8 +231,8 @@ async def health_check():
 # Model type constants
 MODEL_BASE = "base"
 MODEL_CUSTOMVOICE = "customvoice"
-MODEL_ID_BASE = "qwen3-tts-base"
-MODEL_ID_CUSTOMVOICE = "qwen3-tts-customvoice"
+MODEL_ID_BASE = "Voice Cloning"
+MODEL_ID_CUSTOMVOICE = "Prebuilt Voices"
 # Legacy alias — treat bare "qwen3-tts" as base
 MODEL_ID_LEGACY = "qwen3-tts"
 
@@ -381,9 +381,9 @@ async def generate_speech(request: SpeechRequest):
     # Step 1: Determine target model                                       #
     # Priority: explicit model field > voice-name heuristic               #
     # ------------------------------------------------------------------ #
-    if requested_model == MODEL_ID_CUSTOMVOICE:
+    if requested_model in (MODEL_ID_CUSTOMVOICE.lower(), "qwen3-tts-customvoice"):
         target_model = MODEL_CUSTOMVOICE
-    elif requested_model == MODEL_ID_BASE:
+    elif requested_model in (MODEL_ID_BASE.lower(), "qwen3-tts-base"):
         target_model = MODEL_BASE
     elif requested_model in (MODEL_ID_LEGACY, ""):
         # Legacy bare name or empty — apply voice-name heuristic to decide
