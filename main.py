@@ -75,7 +75,7 @@ def start_koboldcpp(model_type=None):
     model_filename = (
         "Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf"
         if model_type == "base"
-        else "Qwen3-TTS-12Hz-1.7B-CustomVoice-q8_0.gguf"
+        else "Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf"
     )
     model_path = os.path.join(PROJECT_DIR, "models", model_filename)
 
@@ -211,27 +211,50 @@ async def health_check():
     }
 
 
+# Model type constants
+MODEL_BASE = "base"
+MODEL_CUSTOMVOICE = "customvoice"
+MODEL_ID_BASE = "qwen3-tts-base"
+MODEL_ID_CUSTOMVOICE = "qwen3-tts-customvoice"
+# Legacy alias — treat bare "qwen3-tts" as base
+MODEL_ID_LEGACY = "qwen3-tts"
+
+
 @app.get("/v1/models")
 @app.get("/v1/audio/models")
 async def list_models():
     return {
         "data": [
-            {"id": "qwen3-tts", "object": "model", "owned_by": "alibaba"}
+            {
+                "id": MODEL_ID_BASE,
+                "object": "model",
+                "owned_by": "alibaba",
+                "description": "Qwen3-TTS Base model — voice cloning from a WAV reference file",
+            },
+            {
+                "id": MODEL_ID_CUSTOMVOICE,
+                "object": "model",
+                "owned_by": "alibaba",
+                "description": "Qwen3-TTS CustomVoice model — pre-built named voices (Vivian, Serena, Ryan, …)",
+            },
         ]
     }
 
 
+# Preset voices are baked into the CustomVoice model; stored by canonical name
 PRESET_VOICE_DATA = [
-    {"id": "Vivian", "voice_id": "Vivian", "name": "Vivian"},
-    {"id": "Serena", "voice_id": "Serena", "name": "Serena"},
-    {"id": "Ryan", "voice_id": "Ryan", "name": "Ryan"},
+    {"id": "Vivian",   "voice_id": "Vivian",   "name": "Vivian"},
+    {"id": "Serena",   "voice_id": "Serena",   "name": "Serena"},
+    {"id": "Ryan",     "voice_id": "Ryan",     "name": "Ryan"},
     {"id": "Uncle_Fu", "voice_id": "Uncle_Fu", "name": "Uncle_Fu"},
-    {"id": "Lily", "voice_id": "Lily", "name": "Lily"},
-    {"id": "Ada", "voice_id": "Ada", "name": "Ada"},
-    {"id": "Mia", "voice_id": "Mia", "name": "Mia"},
-    {"id": "Leo", "voice_id": "Leo", "name": "Leo"},
-    {"id": "Neo", "voice_id": "Neo", "name": "Neo"}
+    {"id": "Lily",     "voice_id": "Lily",     "name": "Lily"},
+    {"id": "Ada",      "voice_id": "Ada",      "name": "Ada"},
+    {"id": "Mia",      "voice_id": "Mia",      "name": "Mia"},
+    {"id": "Leo",      "voice_id": "Leo",      "name": "Leo"},
+    {"id": "Neo",      "voice_id": "Neo",      "name": "Neo"},
 ]
+# Fast lookup set (lowercase) for heuristic matching
+PRESET_NAMES_LOWER = {p["name"].lower() for p in PRESET_VOICE_DATA}
 
 
 @app.get("/v1/audio/voices")
@@ -239,16 +262,24 @@ PRESET_VOICE_DATA = [
 @app.get("/v1/files")
 async def list_voices():
     voices = []
+    # User-uploaded cloning references — served by the Base model
     for name in os.listdir(VOICES_DIR):
         if name.endswith(".wav"):
             voice_id = os.path.splitext(name)[0]
             voices.append({
                 "id": voice_id,
                 "voice_id": voice_id,
-                "name": voice_id
+                "name": voice_id,
+                "type": "cloned",
+                "model": MODEL_ID_BASE,
             })
+    # Pre-built voices — served by the CustomVoice model
     for preset in PRESET_VOICE_DATA:
-        voices.append(preset)
+        voices.append({
+            **preset,
+            "type": "preset",
+            "model": MODEL_ID_CUSTOMVOICE,
+        })
     return {"data": voices}
 
 
@@ -298,9 +329,12 @@ async def upload_voice(
                 os.remove(target_path)
             os.rename(temp_path, target_path)
 
-        # Restart KoboldCpp to force it to re-scan the VOICES_DIR directory
+        # Restart KoboldCpp so it re-scans VOICES_DIR, preserving whichever model was active.
+        # If KoboldCpp is already running we do a graceful restart; if it never started we boot
+        # into Base mode (the natural default for voice-cloning use-cases).
+        active_before = state.active_model if state.kobold_process else MODEL_BASE
         stop_koboldcpp()
-        start_koboldcpp(model_type="base")
+        start_koboldcpp(model_type=active_before)
         if not is_koboldcpp_online():
             raise RuntimeError("Failed to verify that KoboldCpp startup succeeded within 60s.")
 
@@ -320,42 +354,64 @@ async def upload_voice(
 @app.post("/v1/audio/speech")
 @app.post("/audio/speech")
 async def generate_speech(request: SpeechRequest):
-    logger.info(f"Speech request: text_len={len(request.input)}, voice={request.voice}")
+    logger.info(f"Speech request: text_len={len(request.input)}, voice={request.voice}, model={request.model}")
 
-    # Determine target model and voice filename
     requested_voice = str(request.voice or "").strip()
     voice_lower = requested_voice.lower()
-    
-    presets = {"vivian", "serena", "ryan", "uncle_fu", "lily", "ada", "mia", "leo", "neo"}
-    
-    if voice_lower in presets:
-        target_model = "customvoice"
-        preset_name = next((p["name"] for p in PRESET_VOICE_DATA if p["name"].lower() == voice_lower), requested_voice)
-        voice_filename = preset_name
-        logger.info(f"Requested preset voice: {voice_filename}. Target model: customvoice")
+    requested_model = str(request.model or "").strip().lower()
+
+    # ------------------------------------------------------------------ #
+    # Step 1: Determine target model                                       #
+    # Priority: explicit model field > voice-name heuristic               #
+    # ------------------------------------------------------------------ #
+    if requested_model == MODEL_ID_CUSTOMVOICE:
+        target_model = MODEL_CUSTOMVOICE
+    elif requested_model in (MODEL_ID_BASE, MODEL_ID_LEGACY, ""):
+        # Explicit base selection or legacy bare name — still apply heuristic
+        # so a preset voice name with model="qwen3-tts" works naturally.
+        target_model = MODEL_CUSTOMVOICE if voice_lower in PRESET_NAMES_LOWER else MODEL_BASE
     else:
-        target_model = "base"
+        # Unknown model value — fall back to voice heuristic
+        target_model = MODEL_CUSTOMVOICE if voice_lower in PRESET_NAMES_LOWER else MODEL_BASE
+
+    # ------------------------------------------------------------------ #
+    # Step 2: Resolve voice filename                                       #
+    # ------------------------------------------------------------------ #
+    if target_model == MODEL_CUSTOMVOICE:
+        # Resolve canonical preset name (preserves original casing for KoboldCpp)
+        preset_name = next(
+            (p["name"] for p in PRESET_VOICE_DATA if p["name"].lower() == voice_lower),
+            requested_voice or PRESET_VOICE_DATA[0]["name"],
+        )
+        voice_filename = preset_name
+        logger.info(f"Preset voice: '{voice_filename}' — using CustomVoice model")
+    else:
+        # Base model: use uploaded WAV reference, fall back to koboldcpp default
         voice_filename = "kobo"
-        if requested_voice and requested_voice != "default":
-            # Handle cases where the request voice contains the extension
+        if requested_voice and requested_voice not in ("default", ""):
             voice_raw = requested_voice
             if voice_raw.endswith(".wav"):
                 voice_raw = os.path.splitext(voice_raw)[0]
-            
-            if os.path.exists(os.path.join(VOICES_DIR, f"{voice_raw}.wav")):
+            wav_path = os.path.join(VOICES_DIR, f"{voice_raw}.wav")
+            if os.path.exists(wav_path):
                 voice_filename = f"{voice_raw}.wav"
-                logger.info(f"Using cloned voice reference file: {voice_filename}. Target model: base")
+                logger.info(f"Cloned voice reference: '{voice_filename}' — using Base model")
             else:
                 voice_filename = voice_raw
-                logger.warning(f"Voice reference file '{voice_raw}.wav' not found, passing voice parameter directly. Target model: base")
+                logger.warning(
+                    f"Voice reference '{voice_raw}.wav' not found in voices/; "
+                    f"passing '{voice_raw}' directly to KoboldCpp. Using Base model."
+                )
 
-    # Dynamically restart KoboldCpp if the active model needs to change
+    # ------------------------------------------------------------------ #
+    # Step 3: Switch KoboldCpp model if needed                            #
+    # ------------------------------------------------------------------ #
     if state.active_model != target_model:
-        logger.info(f"Dynamic switch: switching KoboldCpp from {state.active_model} to {target_model}...")
+        logger.info(f"Model switch: {state.active_model} → {target_model}")
         stop_koboldcpp()
         start_koboldcpp(model_type=target_model)
         if not is_koboldcpp_online():
-            logger.error("Failed to verify that KoboldCpp startup succeeded during dynamic switch.")
+            logger.error("KoboldCpp did not come online after model switch.")
             raise HTTPException(status_code=500, detail=f"Failed to start KoboldCpp with model: {target_model}")
 
     # Call KoboldCpp native TTS API

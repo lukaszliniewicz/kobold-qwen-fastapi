@@ -218,7 +218,7 @@ def ensure_qwen_models():
     models_dir.mkdir(parents=True, exist_ok=True)
 
     model_path = models_dir / "Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf"
-    custom_model_path = models_dir / "Qwen3-TTS-12Hz-1.7B-CustomVoice-q8_0.gguf"
+    custom_model_path = models_dir / "Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf"
     tokenizer_path = models_dir / "qwen3-tts-tokenizer-f16.gguf"
 
     if not model_path.exists():
