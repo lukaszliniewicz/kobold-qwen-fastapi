@@ -19,8 +19,8 @@ DEFAULT_PIXI = PARENT_DIR / "bin" / ("pixi.exe" if os.name == "nt" else "pixi")
 # Download URLs
 KOBOLD_BASE_URL = "https://github.com/LostRuins/koboldcpp/releases/latest/download/"
 QWEN_MODEL_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf?download=true"
-QWEN_CUSTOM_MODEL_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/Qwen3-TTS-12Hz-1.7B-CustomVoice-q8_0.gguf?download=true"
-QWEN_TOKENIZER_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/qwen3-tts-tokenizer-f16.gguf?download=true"
+QWEN_CUSTOM_MODEL_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf?download=true"
+QWEN_TOKENIZER_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/qwen3-tts-tokenizer-q8_0.gguf?download=true"
 
 
 def parse_args(argv=None):
