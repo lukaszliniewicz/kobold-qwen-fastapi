@@ -7,6 +7,7 @@ import threading
 import logging
 import subprocess
 import time
+from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,13 @@ from pydantic import BaseModel
 from pydub import AudioSegment
 from pydub.effects import speedup
 import requests
+
+from model_catalog import (
+    ensure_model,
+    ensure_tokenizer,
+    normalize_quantization,
+    normalize_size,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s")
 logger = logging.getLogger("kobold-qwen-api")
@@ -35,7 +43,9 @@ class ServerState:
         self.kobold_log_handle = None
         self.backend = os.environ.get("KOBOLD_QWEN_BACKEND", "cpu")
         self.threads = os.environ.get("KOBOLD_QWEN_THREADS", None)
-        self.active_model = "base"
+        self.model_size = normalize_size(os.environ.get("KOBOLD_QWEN_MODEL_SIZE"))
+        self.quantization = normalize_quantization(os.environ.get("KOBOLD_QWEN_QUANTIZATION"))
+        self.active_model = os.environ.get("KOBOLD_QWEN_INITIAL_MODEL", "base")
 
 state = ServerState()
 
@@ -76,12 +86,18 @@ def start_koboldcpp(model_type=None):
     if not use_source and not os.path.exists(binary_path):
         raise FileNotFoundError(f"KoboldCpp binary not found at: {binary_path}")
 
-    model_filename = (
-        "Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf"
-        if model_type == "base"
-        else "Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf"
+    models_dir = Path(PROJECT_DIR) / "models"
+    resolved_size = "1.7b" if model_type == "customvoice" else state.model_size
+    model_path = str(
+        ensure_model(models_dir, model_type, resolved_size, state.quantization)
     )
-    model_path = os.path.join(PROJECT_DIR, "models", model_filename)
+    tokenizer_path = str(ensure_tokenizer(models_dir, state.quantization))
+    logger.info(
+        "Using Qwen3-TTS %s/%s/%s",
+        model_type,
+        resolved_size,
+        state.quantization,
+    )
 
     # Build command line arguments
     if use_source:
@@ -90,7 +106,7 @@ def start_koboldcpp(model_type=None):
             src_py_path,
             "--nomodel",
             "--ttsmodel", model_path,
-            "--ttswavtokenizer", os.path.join(PROJECT_DIR, "models", "qwen3-tts-tokenizer-f16.gguf"),
+            "--ttswavtokenizer", tokenizer_path,
             "--ttsdir", VOICES_DIR,
             "--port", str(state.kobold_port),
             "--quiet"
@@ -100,7 +116,7 @@ def start_koboldcpp(model_type=None):
             binary_path,
             "--nomodel",
             "--ttsmodel", model_path,
-            "--ttswavtokenizer", os.path.join(PROJECT_DIR, "models", "qwen3-tts-tokenizer-f16.gguf"),
+            "--ttswavtokenizer", tokenizer_path,
             "--ttsdir", VOICES_DIR,
             "--port", str(state.kobold_port),
             "--quiet"
@@ -223,6 +239,9 @@ async def health_check():
     return {
         "status": "ok",
         "backend": state.backend,
+        "model_size": state.model_size,
+        "quantization": state.quantization,
+        "active_model": state.active_model,
         "kobold_online": kobold_online,
         "voices_count": len([name for name in os.listdir(VOICES_DIR) if name.endswith(".wav")]),
     }

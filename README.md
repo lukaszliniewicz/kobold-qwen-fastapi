@@ -10,7 +10,9 @@ It automatically detects the host machine's hardware (NVIDIA CUDA, Vulkan AMD/In
 
 - **OpenAI-Compatible Speech API**: Exposes standard speech endpoints (`/v1/audio/speech` / `/audio/speech`) for drop-in integration.
 - **Auto-Hardware Detection**: Detects OS and graphics acceleration to automatically select CUDA, Vulkan, Metal, or CPU backend.
-- **Dependency Automation**: Automatically downloads the latest platform-appropriate KoboldCpp executable and Qwen3-TTS model weights if not present.
+- **Selectable Models**: Starts with a Base 0.6B or 1.7B voice-cloning model, or the 1.7B CustomVoice model with named pre-built voices.
+- **Selectable Precision**: Uses maintained Q8_0 or full FP16 model and tokenizer files.
+- **Lazy Model Downloads**: Downloads only the selected startup model; switching capability later downloads the other required model without replacing existing files.
 - **CPU Thread Optimization**: Dynamically queries physical CPU cores (using `psutil`) to set optimal thread count (`--ttsthreads`), avoiding hyperthreading overhead.
 - **Dynamic Reference Cloning**: Saves uploaded audio clips to the reference folder, instantly enabling custom speaker cloning without server restarts.
 - **Speed Post-Processing**: Applies speed changes dynamically via `pydub` (speeding up or slowing down output audio based on the `speed` parameter) before streaming it back.
@@ -46,6 +48,18 @@ To force the server into CPU-only mode:
 python run.py --backend cpu
 ```
 
+Choose a startup model and precision explicitly:
+
+```bash
+# Lower-memory voice-cloning default
+python run.py --model-size 0.6b --quantization q8_0 --initial-model base
+
+# Full-precision 1.7B pre-built voices
+python run.py --model-size 1.7b --quantization f16 --initial-model customvoice
+```
+
+`customvoice` currently resolves to its available 1.7B model. The API downloads a missing Base or CustomVoice model lazily when a request switches capabilities.
+
 To prepare the local Pixi environment and download models without starting the API server:
 
 ```bash
@@ -66,7 +80,8 @@ The bootstrapper keeps Python packages, temporary files, model weights, and bina
 ### 2. List Models
 - **URL**: `GET /v1/models`
 - **Output**: JSON list of available models:
-  - `qwen3-tts`
+  - `Voice Cloning` (Base)
+  - `Prebuilt Voices` (CustomVoice)
 
 ### 3. List Voices
 - **URL**: `GET /v1/audio/voices` / `GET /v1/files`

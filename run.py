@@ -9,6 +9,15 @@ import platform
 from pathlib import Path
 import urllib.request
 
+from model_catalog import (
+    MODEL_SIZES,
+    QUANTIZATIONS,
+    ensure_model,
+    ensure_tokenizer,
+    normalize_quantization,
+    normalize_size,
+)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] [%(levelname)s] %(message)s")
 log = logging.getLogger("run")
 
@@ -18,9 +27,6 @@ DEFAULT_PIXI = PARENT_DIR / "bin" / ("pixi.exe" if os.name == "nt" else "pixi")
 
 # Download URLs
 KOBOLD_BASE_URL = "https://github.com/LostRuins/koboldcpp/releases/latest/download/"
-QWEN_MODEL_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf?download=true"
-QWEN_CUSTOM_MODEL_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf?download=true"
-QWEN_TOKENIZER_URL = "https://huggingface.co/koboldcpp/tts/resolve/main/qwen3-tts-tokenizer-f16.gguf?download=true"
 
 
 def parse_args(argv=None):
@@ -29,6 +35,9 @@ def parse_args(argv=None):
     parser.add_argument("--port", type=int, default=8042, help="Port number")
     parser.add_argument("--backend", choices=["auto", "cuda", "vulkan", "metal", "cpu"], default="auto", help="Backend accelerator target")
     parser.add_argument("--threads", type=int, default=None, help="Force specific number of CPU threads")
+    parser.add_argument("--model-size", choices=MODEL_SIZES, default="0.6b", help="Initial Base model size")
+    parser.add_argument("--quantization", choices=QUANTIZATIONS, default="q8_0", help="Model and tokenizer precision")
+    parser.add_argument("--initial-model", choices=["base", "customvoice"], default="base", help="Model downloaded and loaded at startup")
     parser.add_argument("--pixi-path", default=None, help="Pixi executable to use when bootstrapping")
     parser.add_argument("--prepare-only", action="store_true", help="Prepare environment and download models without starting server")
     parser.add_argument("--inside-pixi", action="store_true", help=argparse.SUPPRESS)
@@ -213,20 +222,14 @@ def ensure_kobold_binary(backend):
     return binary_path
 
 
-def ensure_qwen_models():
+def ensure_qwen_models(model_type="base", model_size="0.6b", quantization="q8_0"):
     models_dir = PROJECT_DIR / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
-
-    model_path = models_dir / "Qwen3-TTS-12Hz-1.7B-Base-q8_0.gguf"
-    custom_model_path = models_dir / "Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf"
-    tokenizer_path = models_dir / "qwen3-tts-tokenizer-f16.gguf"
-
-    if not model_path.exists():
-        download_file(QWEN_MODEL_URL, model_path)
-    if not custom_model_path.exists():
-        download_file(QWEN_CUSTOM_MODEL_URL, custom_model_path)
-    if not tokenizer_path.exists():
-        download_file(QWEN_TOKENIZER_URL, tokenizer_path)
+    model_path = ensure_model(models_dir, model_type, model_size, quantization)
+    tokenizer_path = ensure_tokenizer(models_dir, quantization)
+    log.info("Qwen3-TTS startup model ready: %s", model_path.name)
+    log.info("Qwen3-TTS tokenizer ready: %s", tokenizer_path.name)
+    return model_path, tokenizer_path
 
 
 def main(argv=None):
@@ -245,10 +248,15 @@ def main(argv=None):
     # 2. Ensure dependencies are satisfied
     log.info("Validating local dependencies...")
     ensure_kobold_binary(backend)
-    ensure_qwen_models()
+    model_size = normalize_size(args.model_size)
+    quantization = normalize_quantization(args.quantization)
+    ensure_qwen_models(args.initial_model, model_size, quantization)
 
     # Expose variables to FastAPI server
     os.environ["KOBOLD_QWEN_BACKEND"] = backend
+    os.environ["KOBOLD_QWEN_MODEL_SIZE"] = model_size
+    os.environ["KOBOLD_QWEN_QUANTIZATION"] = quantization
+    os.environ["KOBOLD_QWEN_INITIAL_MODEL"] = args.initial_model
     if args.threads:
         os.environ["KOBOLD_QWEN_THREADS"] = str(args.threads)
 
