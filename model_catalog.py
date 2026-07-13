@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import os
-import urllib.request
+import shutil
 from pathlib import Path
 
 
-HF_BASE_URL = "https://huggingface.co/koboldcpp/tts/resolve/main"
+HF_REPO_ID = "koboldcpp/tts"
 MODEL_SIZES = ("0.6b", "1.7b")
 QUANTIZATIONS = ("q8_0", "f16")
 
@@ -54,28 +54,46 @@ def tokenizer_filename(quantization: str) -> str:
     return TOKENIZER_FILES[normalize_quantization(quantization)]
 
 
-def download_file(url: str, destination: Path) -> Path:
+def _hf_hub_download(*, filename: str, local_dir: Path) -> Path:
+    """Download through the Hub client so Xet-backed files work reliably."""
+    # The public Xet transfer service becomes unreliable under its more
+    # aggressive adaptive fan-out on some networks. Four parallel ranges
+    # retain good throughput while avoiding the observed 503 retry stall.
+    os.environ.setdefault("HF_XET_FIXED_DOWNLOAD_CONCURRENCY", "4")
+    from huggingface_hub import hf_hub_download
+
+    return Path(
+        hf_hub_download(
+            repo_id=HF_REPO_ID,
+            filename=filename,
+            local_dir=str(local_dir),
+        )
+    )
+
+
+def download_file(filename: str, destination: Path) -> Path:
     if destination.is_file():
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".download")
-    request = urllib.request.Request(url, headers={"User-Agent": "Pandrator-Kobold-Qwen/1"})
     try:
-        with urllib.request.urlopen(request) as response, temporary.open("wb") as output:
-            while block := response.read(1024 * 1024):
-                output.write(block)
-        os.replace(temporary, destination)
+        resolved = _hf_hub_download(filename=filename, local_dir=destination.parent)
+        if resolved.resolve() != destination.resolve():
+            shutil.copyfile(resolved, temporary)
+            os.replace(temporary, destination)
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
+    if not destination.is_file():
+        raise RuntimeError(f"Hugging Face download did not create the expected file: {destination}")
     return destination
 
 
 def ensure_model(models_dir: Path, model_type: str, size: str, quantization: str) -> Path:
     filename = model_filename(model_type, size, quantization)
-    return download_file(f"{HF_BASE_URL}/{filename}?download=true", models_dir / filename)
+    return download_file(filename, models_dir / filename)
 
 
 def ensure_tokenizer(models_dir: Path, quantization: str) -> Path:
     filename = tokenizer_filename(quantization)
-    return download_file(f"{HF_BASE_URL}/{filename}?download=true", models_dir / filename)
+    return download_file(filename, models_dir / filename)

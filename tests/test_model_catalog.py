@@ -1,5 +1,6 @@
 from pathlib import Path
 from model_catalog import (
+    ensure_tokenizer,
     ensure_model,
     model_filename,
     normalize_quantization,
@@ -33,6 +34,37 @@ def test_existing_model_is_not_downloaded(tmp_path: Path):
     expected.write_bytes(b"ready")
     resolved = ensure_model(tmp_path, "base", "0.6b", "q8_0")
     assert resolved == expected
+
+
+def test_model_download_uses_hugging_face_hub(tmp_path: Path, monkeypatch):
+    expected = tmp_path / "Qwen3-TTS-12Hz-1.7B-Base-f16.gguf"
+    calls = []
+
+    def fake_download(*, filename, local_dir):
+        calls.append((filename, local_dir))
+        destination = local_dir / filename
+        destination.write_bytes(b"model")
+        return destination
+
+    monkeypatch.setattr("model_catalog._hf_hub_download", fake_download)
+
+    resolved = ensure_model(tmp_path, "base", "1.7b", "f16")
+
+    assert resolved == expected
+    assert calls == [(expected.name, tmp_path)]
+
+
+def test_tokenizer_download_uses_hugging_face_hub(tmp_path: Path, monkeypatch):
+    expected = tmp_path / "qwen3-tts-tokenizer-f16.gguf"
+
+    def fake_download(*, filename, local_dir):
+        destination = local_dir / filename
+        destination.write_bytes(b"tokenizer")
+        return destination
+
+    monkeypatch.setattr("model_catalog._hf_hub_download", fake_download)
+
+    assert ensure_tokenizer(tmp_path, "f16") == expected
 
 
 def test_launcher_defaults_to_lower_memory_quantized_model():

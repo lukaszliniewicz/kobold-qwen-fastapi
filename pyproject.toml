@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "FastAPI server wrapper for KoboldCpp running Qwen3-TTS, developed for the Pandrator application"
 keywords = ["tts", "qwen", "koboldcpp", "fastapi", "voice-cloning", "pandrator"]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "huggingface-hub>=0.34,<2",
+    "hf-xet>=1.1,<2",
+]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
@@ -24,3 +27,5 @@ python-multipart = ">=0.0.9"
 pydub = "*"
 requests = "*"
 psutil = "*"
+huggingface-hub = ">=0.34,<2"
+hf-xet = ">=1.1,<2"
