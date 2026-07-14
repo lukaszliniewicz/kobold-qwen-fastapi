@@ -55,11 +55,12 @@ def tokenizer_filename(quantization: str) -> str:
 
 
 def _hf_hub_download(*, filename: str, local_dir: Path) -> Path:
-    """Download through the Hub client so Xet-backed files work reliably."""
-    # The public Xet transfer service becomes unreliable under its more
-    # aggressive adaptive fan-out on some networks. Four parallel ranges
-    # retain good throughput while avoiding the observed 503 retry stall.
-    os.environ.setdefault("HF_XET_FIXED_DOWNLOAD_CONCURRENCY", "4")
+    """Download through the Hub client using its reliable HTTP path by default."""
+    # The public Xet CAS can return unauthorised responses for public files.
+    # This must be set before importing huggingface_hub because its constants
+    # are resolved at import time. Power users can explicitly set this to 0 to
+    # opt back into Xet.
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     from huggingface_hub import hf_hub_download
 
     return Path(

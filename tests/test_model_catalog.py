@@ -1,5 +1,10 @@
+import os
+import sys
 from pathlib import Path
+from types import ModuleType
+
 from model_catalog import (
+    _hf_hub_download,
     ensure_tokenizer,
     ensure_model,
     model_filename,
@@ -65,6 +70,40 @@ def test_tokenizer_download_uses_hugging_face_hub(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("model_catalog._hf_hub_download", fake_download)
 
     assert ensure_tokenizer(tmp_path, "f16") == expected
+
+
+def test_hub_download_disables_xet_before_import(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("HF_HUB_DISABLE_XET", raising=False)
+    fake_hub = ModuleType("huggingface_hub")
+
+    def fake_download(**kwargs):
+        assert os.environ["HF_HUB_DISABLE_XET"] == "1"
+        destination = Path(kwargs["local_dir"]) / kwargs["filename"]
+        destination.write_bytes(b"model")
+        return str(destination)
+
+    fake_hub.hf_hub_download = fake_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+    resolved = _hf_hub_download(filename="model.gguf", local_dir=tmp_path)
+
+    assert resolved == tmp_path / "model.gguf"
+
+
+def test_hub_download_respects_explicit_xet_opt_in(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HF_HUB_DISABLE_XET", "0")
+    fake_hub = ModuleType("huggingface_hub")
+
+    def fake_download(**kwargs):
+        assert os.environ["HF_HUB_DISABLE_XET"] == "0"
+        destination = Path(kwargs["local_dir"]) / kwargs["filename"]
+        destination.write_bytes(b"model")
+        return str(destination)
+
+    fake_hub.hf_hub_download = fake_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+    _hf_hub_download(filename="model.gguf", local_dir=tmp_path)
 
 
 def test_launcher_defaults_to_lower_memory_quantized_model():
