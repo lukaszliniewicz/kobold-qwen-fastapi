@@ -25,8 +25,18 @@ PROJECT_DIR = Path(__file__).resolve().parent
 PARENT_DIR = PROJECT_DIR.parent
 DEFAULT_PIXI = PARENT_DIR / "bin" / ("pixi.exe" if os.name == "nt" else "pixi")
 
-# Download URLs
-KOBOLD_BASE_URL = "https://github.com/LostRuins/koboldcpp/releases/latest/download/"
+# Pandrator's KoboldCpp fork carries the Qwen3-TTS CustomVoice name-to-token
+# mapping required by this service. Stock binaries currently collapse named
+# presets to an invalid/default speaker. Keep the release identity beside the
+# binary so existing upstream downloads are replaced on the next preparation.
+KOBOLD_BINARY_RELEASE = os.environ.get(
+    "KOBOLD_QWEN_BINARY_RELEASE",
+    "qwen3tts-customvoice-v1",
+)
+KOBOLD_BASE_URL = os.environ.get(
+    "KOBOLD_QWEN_BINARY_BASE_URL",
+    f"https://github.com/lukaszliniewicz/koboldcpp/releases/download/{KOBOLD_BINARY_RELEASE}/",
+).rstrip("/") + "/"
 
 
 def parse_args(argv=None):
@@ -156,9 +166,9 @@ def detect_hardware():
     return "cpu"
 
 
-def download_file(url, dest_path):
+def download_file(url, dest_path, *, force=False):
     dest_path = Path(dest_path)
-    if dest_path.exists():
+    if dest_path.exists() and not force:
         return
 
     log.info(f"Downloading {url} -> {dest_path}...")
@@ -199,24 +209,40 @@ def ensure_kobold_binary(backend):
     bin_dir = PROJECT_DIR / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     sys_name = platform.system()
+    marker_path = bin_dir / ".koboldcpp-release"
+    expected_identity = f"{KOBOLD_BINARY_RELEASE}\n{KOBOLD_BASE_URL}"
+
+    def ensure_asset(binary_path, asset_name):
+        keep_existing = os.environ.get("KOBOLD_QWEN_KEEP_EXISTING_BINARY", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        try:
+            installed_identity = marker_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            installed_identity = ""
+
+        needs_download = not binary_path.exists() or (
+            not keep_existing and installed_identity != expected_identity
+        )
+        if needs_download:
+            download_file(KOBOLD_BASE_URL + asset_name, binary_path, force=True)
+            marker_path.write_text(expected_identity + "\n", encoding="utf-8")
+        return binary_path
 
     if sys_name == "Windows":
         binary_path = bin_dir / "koboldcpp.exe"
-        if not binary_path.exists():
-            download_file(KOBOLD_BASE_URL + "koboldcpp.exe", binary_path)
-        return binary_path
+        return ensure_asset(binary_path, "koboldcpp.exe")
 
     binary_path = bin_dir / "koboldcpp"
-    if not binary_path.exists():
-        if sys_name == "Darwin":
-            download_file(KOBOLD_BASE_URL + "koboldcpp-mac-arm64", binary_path)
-        elif sys_name == "Linux":
-            if backend == "cuda":
-                download_file(KOBOLD_BASE_URL + "koboldcpp-linux-x64", binary_path)
-            else:
-                download_file(KOBOLD_BASE_URL + "koboldcpp-linux-x64-nocuda", binary_path)
-        
-        # Set execute permissions
+    if sys_name == "Darwin":
+        ensure_asset(binary_path, "koboldcpp-mac-arm64")
+    elif sys_name == "Linux":
+        asset_name = "koboldcpp-linux-x64" if backend == "cuda" else "koboldcpp-linux-x64-nocuda"
+        ensure_asset(binary_path, asset_name)
+    else:
+        raise RuntimeError(f"Unsupported platform for KoboldCpp: {sys_name}")
+
+    if binary_path.exists():
         os.chmod(binary_path, 0o755)
 
     return binary_path

@@ -11,6 +11,7 @@ It automatically detects the host machine's hardware (NVIDIA CUDA, Vulkan AMD/In
 - **OpenAI-Compatible Speech API**: Exposes standard speech endpoints (`/v1/audio/speech` / `/audio/speech`) for drop-in integration.
 - **Auto-Hardware Detection**: Detects OS and graphics acceleration to automatically select CUDA, Vulkan, Metal, or CPU backend.
 - **Selectable Models**: Starts with a Base 0.6B or 1.7B voice-cloning model, or the 1.7B CustomVoice model with named pre-built voices.
+- **Exact CustomVoice Presets**: Maps all nine official Qwen speakers to their fixed model tokens through Pandrator's patched KoboldCpp build; unsupported stock binaries are detected instead of silently producing a fallback voice.
 - **Selectable Precision**: Uses maintained Q8_0 or full FP16 model and tokenizer files.
 - **Lazy Model Downloads**: Downloads only the selected startup model; switching capability later downloads the other required model without replacing existing files.
 - **CPU Thread Optimization**: Dynamically queries physical CPU cores (using `psutil`) to set optimal thread count (`--ttsthreads`), avoiding hyperthreading overhead.
@@ -67,6 +68,12 @@ python run.py --prepare-only
 ```
 
 The bootstrapper keeps Python packages, temporary files, model weights, and binaries isolated under the local folder. It does not install Python packages system-wide.
+
+KoboldCpp is downloaded from the versioned Pandrator fork release required for
+the nine CustomVoice presets. Existing unmarked upstream binaries are replaced
+atomically during preparation. Advanced users can override the release with
+`KOBOLD_QWEN_BINARY_RELEASE` and `KOBOLD_QWEN_BINARY_BASE_URL`, or explicitly
+retain a locally managed binary with `KOBOLD_QWEN_KEEP_EXISTING_BINARY=1`.
 
 ---
 

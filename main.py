@@ -34,6 +34,10 @@ app = FastAPI(
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 VOICES_DIR = os.path.join(PROJECT_DIR, "voices")
 os.makedirs(VOICES_DIR, exist_ok=True)
+EXPECTED_KOBOLD_BINARY_RELEASE = os.environ.get(
+    "KOBOLD_QWEN_BINARY_RELEASE",
+    "qwen3tts-customvoice-v1",
+)
 
 # Shared server state
 class ServerState:
@@ -79,9 +83,11 @@ def start_koboldcpp(model_type=None):
     binary_name = "koboldcpp.exe" if os.name == "nt" else "koboldcpp"
     binary_path = os.path.join(PROJECT_DIR, "bin", binary_name)
 
-    # Check if we should run from patched source
-    src_py_path = "/home/lliniewicz/Pandrator/koboldcpp/koboldcpp.py"
-    use_source = os.path.exists(src_py_path)
+    # Source mode is an explicit developer override. Never silently bypass the
+    # versioned patched binary because a machine happens to contain a checkout
+    # at a developer-specific path.
+    src_py_path = os.environ.get("KOBOLD_QWEN_KOBOLDCPP_SOURCE", "").strip()
+    use_source = bool(src_py_path) and os.path.isfile(src_py_path)
 
     if not use_source and not os.path.exists(binary_path):
         raise FileNotFoundError(f"KoboldCpp binary not found at: {binary_path}")
@@ -229,11 +235,15 @@ class SpeechRequest(BaseModel):
 @app.get("/")
 async def health_check():
     kobold_online = False
+    speakers = []
     if state.kobold_port:
         try:
             resp = requests.get(f"http://127.0.0.1:{state.kobold_port}/api/extra/speakers_list", timeout=1)
             kobold_online = (resp.status_code == 200)
-        except requests.RequestException:
+            if kobold_online:
+                payload = resp.json()
+                speakers = payload if isinstance(payload, list) else []
+        except (requests.RequestException, ValueError):
             pass
             
     return {
@@ -243,6 +253,7 @@ async def health_check():
         "quantization": state.quantization,
         "active_model": state.active_model,
         "kobold_online": kobold_online,
+        "customvoice_presets_ready": customvoice_presets_ready(speakers),
         "voices_count": len([name for name in os.listdir(VOICES_DIR) if name.endswith(".wav")]),
     }
 
@@ -291,6 +302,60 @@ PRESET_VOICE_DATA = [
 ]
 # Fast lookup set (lowercase) for heuristic matching (supporting both ID and descriptive name)
 PRESET_NAMES_LOWER = {p["id"].lower() for p in PRESET_VOICE_DATA} | {p["name"].lower() for p in PRESET_VOICE_DATA}
+PRESET_KOBOLD_IDS = {p["id"].lower() for p in PRESET_VOICE_DATA}
+
+
+def resolve_preset_voice(value: str):
+    """Return a canonical preset record for an ID or its descriptive label."""
+    normalized = str(value or "").strip().lower()
+    return next(
+        (
+            preset
+            for preset in PRESET_VOICE_DATA
+            if preset["id"].lower() == normalized or preset["name"].lower() == normalized
+        ),
+        PRESET_VOICE_DATA[0],
+    )
+
+
+def installed_kobold_release():
+    try:
+        return (
+            Path(PROJECT_DIR, "bin", ".koboldcpp-release")
+            .read_text(encoding="utf-8")
+            .splitlines()[0]
+            .strip()
+        )
+    except (OSError, IndexError):
+        return ""
+
+
+def customvoice_presets_ready(speakers, release=None):
+    """Detect the versioned build carrying the fixed nine-speaker mapping."""
+    available = {str(speaker).strip().lower() for speaker in (speakers or [])}
+    source_override = bool(os.environ.get("KOBOLD_QWEN_KOBOLDCPP_SOURCE", "").strip())
+    release_ready = str(release if release is not None else installed_kobold_release()).strip() == EXPECTED_KOBOLD_BINARY_RELEASE
+    return PRESET_KOBOLD_IDS.issubset(available) and (release_ready or source_override)
+
+
+def require_customvoice_support():
+    try:
+        response = requests.get(
+            f"http://127.0.0.1:{state.kobold_port}/api/extra/speakers_list",
+            timeout=3,
+        )
+        speakers = response.json() if response.status_code == 200 else []
+    except (requests.RequestException, ValueError):
+        speakers = []
+    if not customvoice_presets_ready(speakers):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The active KoboldCpp binary does not expose the fixed Qwen3-TTS "
+                "CustomVoice speaker map. Run the Qwen service preparation again "
+                "to install the Pandrator-patched binary."
+            ),
+        )
 
 
 @app.get("/v1/audio/voices")
@@ -416,10 +481,7 @@ async def generate_speech(request: SpeechRequest):
     # ------------------------------------------------------------------ #
     if target_model == MODEL_CUSTOMVOICE:
         # Resolve canonical preset (supports both ID and descriptive name matching)
-        preset = next(
-            (p for p in PRESET_VOICE_DATA if p["id"].lower() == voice_lower or p["name"].lower() == voice_lower),
-            PRESET_VOICE_DATA[0],
-        )
+        preset = resolve_preset_voice(requested_voice)
         canonical_id = preset["id"]
         # Pass the lowercase name directly since KoboldCpp's backend is now patched with the official speaker names
         voice_filename = canonical_id.lower()
@@ -452,6 +514,9 @@ async def generate_speech(request: SpeechRequest):
         if not is_koboldcpp_online():
             logger.error("KoboldCpp did not come online after model switch.")
             raise HTTPException(status_code=500, detail=f"Failed to start KoboldCpp with model: {target_model}")
+
+    if target_model == MODEL_CUSTOMVOICE:
+        require_customvoice_support()
 
     # Call KoboldCpp native TTS API
     url = f"http://127.0.0.1:{state.kobold_port}/api/extra/tts"
