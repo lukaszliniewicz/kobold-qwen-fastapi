@@ -229,6 +229,8 @@ class SpeechRequest(BaseModel):
     speed: Optional[float] = 1.0
     temperature: Optional[float] = 0.8
     response_format: Optional[str] = "wav"
+    instructions: Optional[str] = None
+    instruction: Optional[str] = None
 
 
 @app.get("/health")
@@ -524,6 +526,12 @@ async def generate_speech(request: SpeechRequest):
         "text": request.input,
         "voice": voice_filename
     }
+    generation_instruction = str(
+        request.instructions or request.instruction or ""
+    ).strip()
+    if target_model == MODEL_CUSTOMVOICE and generation_instruction:
+        # KoboldCpp's native TTS endpoint uses the singular field name.
+        payload["instruction"] = generation_instruction
 
     try:
         resp = requests.post(url, json=payload, timeout=120)
